@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>테헤란로 맛집 큐레이터</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- 수정된 카카오맵 SDK (새 API 키 적용) -->
+    <script type="text/javascript" src="//dapi.kakao.com/v2/maps/sdk.js?appkey=d3a5f75905b9262c1beeeb969296789e&libraries=services&autoload=false"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;700&display=swap');
+        body { font-family: 'Pretendard', sans-serif; overflow: hidden; }
+        .active-tab { border-bottom: 4px solid #3b82f6; color: #3b82f6; font-weight: 700; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="bg-gray-100 flex h-screen">
+
+    <!-- 좌측 패널 -->
+    <aside class="w-[450px] bg-white flex flex-col shadow-2xl border-r z-10">
+        <header class="p-6 border-b">
+            <h1 class="text-2xl font-black text-blue-600 flex items-center gap-2">
+                <i data-lucide="map-pin"></i> 맛집 큐레이터
+            </h1>
+            <p class="text-[10px] text-gray-400 mt-1 font-bold tracking-widest uppercase">GFC HQ Base Guide</p>
+        </header>
+
+        <!-- 검색창 -->
+        <div class="p-4 bg-gray-50 border-b">
+            <div class="relative">
+                <input type="text" id="searchInput" onkeypress="if(event.keyCode==13) handleSearch()"
+                    class="w-full p-4 pr-12 border-2 border-gray-200 rounded-2xl focus:border-blue-500 outline-none shadow-inner"
+                    placeholder="돈까스, 부대찌개 등을 검색하세요!">
+                <button onclick="handleSearch()" class="absolute right-4 top-4 text-blue-500">
+                    <i data-lucide="search"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- 스크롤 내용 영역 -->
+        <div id="contentArea" class="flex-1 overflow-y-auto no-scrollbar">
+            <!-- 웰컴 뷰 -->
+            <div id="welcomeView" class="p-12 text-center text-gray-400">
+                <div class="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-4 text-blue-500">
+                    <i data-lucide="sparkles"></i>
+                </div>
+                <p class="text-sm">지마켓 본사(GFC) 도보 기준<br>가장 빠른 맛집을 추천합니다.</p>
+            </div>
+
+            <!-- 검색 결과 리스트 -->
+            <div id="listView" class="hidden divide-y"></div>
+
+            <!-- 상세 페이지 -->
+            <div id="detailView" class="hidden h-full flex flex-col bg-white animate-in slide-in-from-right duration-300">
+                <button onclick="showList()" class="p-4 text-sm text-blue-500 font-bold flex items-center gap-1">
+                    <i data-lucide="chevron-left"></i> 목록으로 돌아가기
+                </button>
+                <div class="px-6 pb-4">
+                    <h2 id="detName" class="text-3xl font-black text-gray-900"></h2>
+                    <p id="detCat" class="text-sm text-blue-500 font-bold mt-1"></p>
+                </div>
+                <div class="flex border-b text-center text-sm font-bold text-gray-400">
+                    <div onclick="switchTab('home')" id="t-home" class="flex-1 py-4 cursor-pointer active-tab">홈</div>
+                    <div onclick="switchTab('menu')" id="t-menu" class="flex-1 py-4 cursor-pointer">메뉴</div>
+                    <div onclick="switchTab('route')" id="t-route" class="flex-1 py-4 cursor-pointer">길찾기</div>
+                </div>
+                <div id="tabContent" class="p-6 flex-1 overflow-y-auto"></div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- 우측 지도 -->
+    <main id="map" class="flex-1 relative">
+        <div class="absolute top-6 left-6 z-20 bg-white/90 backdrop-blur p-3 rounded-2xl shadow-lg border border-white flex items-center gap-2">
+            <div class="w-2 h-2 bg-red-500 rounded-full animate-ping"></div>
+            <span class="text-xs font-bold">출발: 지마켓 본사 (GFC)</span>
+        </div>
+    </main>
+
+    <script>
+        const GFC = { lat: 37.5000, lng: 127.0365 };
+        let map, markers = [], polyline = null, current = null;
+
+        const data = [
+            { id: 1, name: "백소정 역삼점", cat: "일식", lat: 37.5012, lng: 127.0375, time: 4, intro: "마제소바와 두툼한 돈카츠 전문점입니다.", menus: ["마제소바 세트: 14.9", "치즈카츠: 13.9"], guide: "GFC 2번 출구에서 도보 4분" },
+            { id: 2, name: "대우부대찌개", cat: "한식", lat: 37.5028, lng: 127.0355, time: 8, intro: "미나리 향이 가득한 역삼역 노포 부대찌개입니다.", menus: ["등심 부대찌개: 15.0", "부대찌개: 12.0"], guide: "역삼역 4번 출구 방향 도보 8분" }
+        ];
+
+        function initMap() {
+            // 카카오맵 로드 대기 로직
+            kakao.maps.load(() => {
+                const container = document.getElementById('map');
+                map = new kakao.maps.Map(container, {
+                    center: new kakao.maps.LatLng(GFC.lat, GFC.lng),
+                    level: 3
+                });
+                new kakao.maps.Marker({
+                    position: new kakao.maps.LatLng(GFC.lat, GFC.lng),
+                    map: map,
+                    image: new kakao.maps.MarkerImage('https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/markerStar.png', new kakao.maps.Size(24, 35))
+                });
+                lucide.createIcons();
+            });
+        }
+
+        function handleSearch() {
+            const q = document.getElementById('searchInput').value;
+            if(!q) return;
+            document.getElementById('welcomeView').classList.add('hidden');
+            document.getElementById('detailView').classList.add('hidden');
+            const lv = document.getElementById('listView');
+            lv.classList.remove('hidden');
+            lv.innerHTML = '';
+
+            const res = data.filter(r => r.name.includes(q) || r.cat.includes(q));
+            res.forEach(r => {
+                const item = document.createElement('div');
+                item.className = "p-6 hover:bg-blue-50 cursor-pointer border-b transition-colors";
+                item.onclick = () => {
+                    current = r;
+                    document.getElementById('listView').classList.add('hidden');
+                    document.getElementById('detailView').classList.remove('hidden');
+                    document.getElementById('detName').innerText = r.name;
+                    document.getElementById('detCat').innerText = r.cat;
+                    switchTab('home');
+                    map.panTo(new kakao.maps.LatLng(r.lat, r.lng));
+                };
+                item.innerHTML = `<h3 class="font-bold text-lg">${r.name}</h3><p class="text-xs text-gray-400 mt-1">${r.cat} | 도보 ${r.time}분</p>`;
+                lv.appendChild(item);
+            });
+            renderMarkers(res);
+        }
+
+        function switchTab(t) {
+            const tabs = ['home', 'menu', 'route'];
+            tabs.forEach(tab => document.getElementById(`t-${tab}`).className = "flex-1 py-4 cursor-pointer");
+            document.getElementById(`t-${t}`).className = "flex-1 py-4 cursor-pointer active-tab";
+            
+            const cont = document.getElementById('tabContent');
+            if(t === 'home') cont.innerHTML = `<p class="text-sm leading-relaxed">${current.intro}</p>`;
+            else if(t === 'menu') cont.innerHTML = `<div class="space-y-2">${current.menus.map(m => `<div class="p-3 bg-gray-50 rounded-xl border font-bold text-sm">${m}</div>`).join('')}</div>`;
+            else if(t === 'route') {
+                drawRoute(current);
+                cont.innerHTML = `<div class="bg-blue-600 p-6 rounded-3xl text-white">
+                    <h4 class="text-2xl font-black">약 ${current.time}분 소요</h4>
+                    <p class="mt-3 text-xs opacity-80">${current.guide}</p>
+                </div>`;
+            }
+        }
+
+        function renderMarkers(list) {
+            markers.forEach(m => m.setMap(null));
+            markers = list.map(r => new kakao.maps.Marker({ position: new kakao.maps.LatLng(r.lat, r.lng), map: map }));
+        }
+
+        function drawRoute(r) {
+            if(polyline) polyline.setMap(null);
+            polyline = new kakao.maps.Polyline({
+                path: [new kakao.maps.LatLng(GFC.lat, GFC.lng), new kakao.maps.LatLng(r.lat, r.lng)],
+                strokeWeight: 6, strokeColor: '#3b82f6', strokeOpacity: 0.8
+            });
+            polyline.setMap(map);
+        }
+
+        function showList() {
+            document.getElementById('detailView').classList.add('hidden');
+            document.getElementById('listView').classList.remove('hidden');
+            if(polyline) polyline.setMap(null);
+        }
+
+        window.onload = initMap;
+    </script>
+</body>
+</html>
